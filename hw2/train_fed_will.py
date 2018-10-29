@@ -59,7 +59,7 @@ def setup_logger(logdir, locals_):
     # Configure output directory for logging
     logz.configure_output_dir(logdir)
     # Log experimental parameters
-    args = inspect.getargspec(train_PG)[0]
+    args = inspect.getargspec(train_FED)[0]
     params = {k: locals_[k] if k in locals_ else None for k in args}
     logz.save_params(params)
 
@@ -85,9 +85,18 @@ class Agent(object):
         self.reward_to_go = estimate_return_args['reward_to_go']
         self.nn_baseline = estimate_return_args['nn_baseline']
         self.normalize_advantages = estimate_return_args['normalize_advantages']
+        # TODO: fix this hack to have different scopes
+        self.scope = str(time.time())
 
     def get_weights(self):
         return self.sess.run(self.weights)
+
+    def set_weights(self, weight_values):
+        """
+        weight_values must be inputted for all trainable variables in the graph
+        """
+        assign_op = [var.assign(val) for var, val in zip(self.weights, weight_values)]
+        self.sess.run(assign_op)
 
     def init_tf_sess(self):
         tf_config = tf.ConfigProto(inter_op_parallelism_threads=1, intra_op_parallelism_threads=1) 
@@ -149,11 +158,11 @@ class Agent(object):
         """
         if self.discrete:
             # YOUR_CODE_HERE
-            sy_logits_na = build_mlp(sy_ob_no, self.ac_dim, "dave", self.n_layers, self.size)
+            sy_logits_na = build_mlp(sy_ob_no, self.ac_dim, self.scope, self.n_layers, self.size)
             return sy_logits_na
         else:
             # YOUR_CODE_HERE
-            sy_mean = build_mlp(sy_ob_no, self.ac_dim, "dave", self.n_layers, self.size)
+            sy_mean = build_mlp(sy_ob_no, self.ac_dim, self.scope, self.n_layers, self.size)
             sy_logstd = tf.Variable(tf.zeros(self.ac_dim), name="logstd")
             return (sy_mean, sy_logstd)
 
@@ -536,41 +545,83 @@ class Agent(object):
         feed_dict = {self.sy_ob_no: ob_no, self.sy_ac_na: ac_na, self.sy_adv_n: adv_n}
         _ = self.sess.run(self.update_op, feed_dict=feed_dict)
 
-def train_PG(
-        exp_name,
+# runs agent for n_iter gradient steps
+# TODO: check if n_grad_steps is accurate name
+def run_agent(agent, env, n_grad_steps):
+    start = time.time()
+    total_timesteps = 0
+    for itr in range(n_grad_steps):
+        print("********** Iteration %i ************" % itr)
+        paths, timesteps_this_batch = agent.sample_trajectories(itr, env)
+        total_timesteps += timesteps_this_batch
+
+        # Build arrays for observation, action for the policy gradient update by concatenating 
+        # across paths
+        ob_no = np.concatenate([path["observation"] for path in paths])
+        ac_na = np.concatenate([path["action"] for path in paths])
+        re_n = [path["reward"] for path in paths]
+
+        q_n, adv_n = agent.estimate_return(ob_no, re_n)
+        agent.update_parameters(ob_no, ac_na, q_n, adv_n)
+
+        # Log diagnostics
+        returns = [path["reward"].sum() for path in paths]
+        ep_lengths = [pathlength(path) for path in paths]
+        logz.log_tabular("Time", time.time() - start)
+        logz.log_tabular("Iteration", itr)
+        logz.log_tabular("AverageReturn", np.mean(returns))
+        logz.log_tabular("StdReturn", np.std(returns))
+        logz.log_tabular("MaxReturn", np.max(returns))
+        logz.log_tabular("MinReturn", np.min(returns))
+        logz.log_tabular("EpLenMean", np.mean(ep_lengths))
+        logz.log_tabular("EpLenStd", np.std(ep_lengths))
+        logz.log_tabular("TimestepsThisBatch", timesteps_this_batch)
+        logz.log_tabular("TimestepsSoFar", total_timesteps)
+        logz.dump_tabular()
+        logz.pickle_tf_vars()
+
+#TODO: use kwargs
+# def init_agent(computation_graph_args, sample_trajectory_args, estimate_return_args):
+#     return Agent(computation_graph_args, sample_trajectory_args, estimate_return_args)
+
+
+# list of the weights of each agent's model
+# each agent has a list of weights for each layer of their model
+# [[A1_W1, A1_W2], [A2_W1, A2_W2], [A3_W1, A3_W2]]
+def compute_average_weights(all_weights):
+    averaged = []
+    number_of_variables = len(all_weights[0])
+    # iterate through each model layer and average them
+    for i in range(number_of_variables):
+        averaged.append(np.mean([weights[i] for weights in all_weights], axis=0))
+    return averaged
+
+
+def train_FED(
+        exp_name, # skip
         env_name,
-        n_iter, 
-        gamma, 
-        min_timesteps_per_batch, 
+        n_iter, # skip
+        gamma,
+        min_timesteps_per_batch,
         max_path_length,
-        learning_rate, 
-        reward_to_go, 
-        animate, 
-        logdir, 
+        learning_rate,
+        reward_to_go,
+        animate,
+        logdir, # skip
         normalize_advantages,
-        nn_baseline, 
+        nn_baseline,
         seed,
         n_layers,
         size):
-
-    start = time.time()
-
+    NUMBER_OF_AGENTS = 3
     #========================================================================================#
     # Set Up Logger
     #========================================================================================#
     setup_logger(logdir, locals())
 
-    #========================================================================================#
-    # Set Up Env
-    #========================================================================================#
-
-    # Make the gym environment
+    # Make the gym environment for sake of gathering env data
+    # will need to make env for each individual
     env = gym.make(env_name)
-
-    # Set random seeds
-    tf.set_random_seed(seed)
-    np.random.seed(seed)
-    env.seed(seed)
 
     # Maximum length for episodes
     max_path_length = max_path_length or env.spec.max_episode_steps
@@ -607,53 +658,50 @@ def train_PG(
         'normalize_advantages': normalize_advantages,
     }
 
-    agent = Agent(computation_graph_args, sample_trajectory_args, estimate_return_args)
+    agents = [Agent(computation_graph_args, sample_trajectory_args, estimate_return_args) for _ in range(NUMBER_OF_AGENTS)]
 
     # build computation graph
-    agent.build_computation_graph()
+    [a.build_computation_graph() for a in agents]
 
     # tensorflow: config, session, variable initialization
-    agent.init_tf_sess()
+    [a.init_tf_sess() for a in agents]
 
     #========================================================================================#
     # Training Loop
     #========================================================================================#
+    # TODO: parallelize, may neec to make seperate envs
+    for its in range(n_iter):
+        # each agent samples trajectories
+        [run_agent(a, env, 1) for a in agents]
 
-    total_timesteps = 0
-    for itr in range(n_iter):
-        print("********** Iteration %i ************"%itr)
-        paths, timesteps_this_batch = agent.sample_trajectories(itr, env)
-        total_timesteps += timesteps_this_batch
+        # gather all weights
+        all_weights = [a.get_weights() for a in agents]
 
-        # Build arrays for observation, action for the policy gradient update by concatenating 
-        # across paths
-        ob_no = np.concatenate([path["observation"] for path in paths])
-        ac_na = np.concatenate([path["action"] for path in paths])
-        re_n = [path["reward"] for path in paths]
+        # compute average weight
+        avg_weights = compute_average_weights(all_weights)
+        
+        # set weights of all agents
+        [a.set_weights(avg_weights) for a in agents]
 
-        q_n, adv_n = agent.estimate_return(ob_no, re_n)
-        agent.update_parameters(ob_no, ac_na, q_n, adv_n)
 
-        # Log diagnostics
-        returns = [path["reward"].sum() for path in paths]
-        ep_lengths = [pathlength(path) for path in paths]
-        logz.log_tabular("Time", time.time() - start)
-        logz.log_tabular("Iteration", itr)
-        logz.log_tabular("AverageReturn", np.mean(returns))
-        logz.log_tabular("StdReturn", np.std(returns))
-        logz.log_tabular("MaxReturn", np.max(returns))
-        logz.log_tabular("MinReturn", np.min(returns))
-        logz.log_tabular("EpLenMean", np.mean(ep_lengths))
-        logz.log_tabular("EpLenStd", np.std(ep_lengths))
-        logz.log_tabular("TimestepsThisBatch", timesteps_this_batch)
-        logz.log_tabular("TimestepsSoFar", total_timesteps)
-        logz.dump_tabular()
-        logz.pickle_tf_vars()
-        weights = agent.get_weights()
-        print("length", len(weights))
-        [print(x.shape) for x in weights]
-        # print("weights", weights)
-        #[print(n, v) for n, v in zip(agent.get_weights())]
+    # weights = agent.get_weights()
+    # print("INITIAL")
+    # print("length", len(weights))
+    # [print(x.shape) for x in weights]
+    # print("bias 1", weights[1])
+
+    # zeroed_weights = [np.ones(w.shape) for w in weights]
+
+    # agent.set_weights(zeroed_weights)
+
+    # weights = agent.get_weights()
+    # print("AFTER SETTING")
+    # print("length", len(weights))
+    # [print(x.shape) for x in weights]
+    # [print(x) for x in weights]
+    # print("bias 1", weights[1])
+    # print("weights", weights)
+    #[print(n, v) for n, v in zip(agent.get_weights())]
 
 
 def main():
@@ -685,41 +733,35 @@ def main():
 
     max_path_length = args.ep_len if args.ep_len > 0 else None
 
-    processes = []
+    seed = args.seed
+    print('Running experiment with seed %d'%seed)
 
-    for e in range(args.n_experiments):
-        seed = args.seed + 10*e
-        print('Running experiment with seed %d'%seed)
-
-        def train_func():
-            train_PG(
-                exp_name=args.exp_name,
-                env_name=args.env_name,
-                n_iter=args.n_iter,
-                gamma=args.discount,
-                min_timesteps_per_batch=args.batch_size,
-                max_path_length=max_path_length,
-                learning_rate=args.learning_rate,
-                reward_to_go=args.reward_to_go,
-                animate=args.render,
-                logdir=os.path.join(logdir,'%d'%seed),
-                normalize_advantages=not(args.dont_normalize_advantages),
-                nn_baseline=args.nn_baseline, 
-                seed=seed,
-                n_layers=args.n_layers,
-                size=args.size
-                )
-        # # Awkward hacky process runs, because Tensorflow does not like
-        # # repeatedly calling train_PG in the same thread.
-        p = Process(target=train_func, args=tuple())
-        p.start()
-        processes.append(p)
-        # if you comment in the line below, then the loop will block 
-        # until this process finishes
-        # p.join()
-
-    for p in processes:
-        p.join()
+    def train_func():
+        train_FED(
+            exp_name=args.exp_name,
+            env_name=args.env_name,
+            n_iter=args.n_iter,
+            gamma=args.discount,
+            min_timesteps_per_batch=args.batch_size,
+            max_path_length=max_path_length,
+            learning_rate=args.learning_rate,
+            reward_to_go=args.reward_to_go,
+            animate=args.render,
+            logdir=os.path.join(logdir,'%d'%seed),
+            normalize_advantages=not(args.dont_normalize_advantages),
+            nn_baseline=args.nn_baseline, 
+            seed=seed,
+            n_layers=args.n_layers,
+            size=args.size
+            )
+    # # Awkward hacky process runs, because Tensorflow does not like
+    # # repeatedly calling train_FED in the same thread.
+    p = Process(target=train_func, args=tuple())
+    p.start()
+    processes.append(p)
+    # if you comment in the line below, then the loop will block 
+    # until this process finishes
+    # p.join()
 
 if __name__ == "__main__":
     main()
