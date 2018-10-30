@@ -555,7 +555,7 @@ class Agent(object):
 
 # runs agent for n_iter gradient steps
 # TODO: check if n_grad_steps is accurate name
-def run_agent(agent, env, n_grad_steps, comm_iter):
+def run_agent(agent, env, n_grad_steps, comm_iter, agent_id):
     start = time.time()
     total_timesteps = 0
     for itr in range(n_grad_steps):
@@ -576,8 +576,8 @@ def run_agent(agent, env, n_grad_steps, comm_iter):
         returns = [path["reward"].sum() for path in paths]
         ep_lengths = [pathlength(path) for path in paths]
         logz.log_tabular("Time", time.time() - start)
-        logz.log_tabular("CommunicationRound", comm_iter)
-        logz.log_tabular("Iteration", itr)
+        logz.log_tabular("Agent", agent_id)
+        logz.log_tabular("Iteration", comm_iter*n_grad_steps+itr)
         logz.log_tabular("AverageReturn", np.mean(returns))
         logz.log_tabular("StdReturn", np.std(returns))
         logz.log_tabular("MaxReturn", np.max(returns))
@@ -626,7 +626,6 @@ def train_FED(
         n_layers,
         size
         ):
-    NUMBER_OF_AGENTS = 3
     #========================================================================================#
     # Set Up Logger
     #========================================================================================#
@@ -684,7 +683,7 @@ def train_FED(
     # TODO: parallelize, may neec to make seperate envs
     for comm_iter in range(n_comm_iter):
         # each agent samples trajectories
-        [run_agent(a, env, g_iter, comm_iter) for a in agents]
+        [run_agent(agents[i], env, g_iter, comm_iter, i) for i in range(n_clients)]
 
         # gather all weights
         all_weights = [a.get_weights() for a in agents]
