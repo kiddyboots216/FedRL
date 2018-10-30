@@ -68,8 +68,11 @@ def setup_logger(logdir, locals_):
 #============================================================================================#
 
 class Agent(object):
-    def __init__(self, computation_graph_args, sample_trajectory_args, estimate_return_args):
+    def __init__(self, computation_graph_args, sample_trajectory_args, estimate_return_args, agent_i, logdir):
         super(Agent, self).__init__()
+        logdir=os.path.join(logdir,'%d'%agent_i)
+        # setup_logger will overwrite the logdir 
+        setup_logger(logdir, locals())
         self.ob_dim = computation_graph_args['ob_dim']
         self.ac_dim = computation_graph_args['ac_dim']
         self.discrete = computation_graph_args['discrete']
@@ -88,12 +91,17 @@ class Agent(object):
         # TODO: fix this hack to have different scopes
         self.scope = str(time.time())
 
+
     def get_weights(self):
+        """
+        NOTE: WILLCODE
+        """
         return self.sess.run(self.weights)
 
     def set_weights(self, weight_values):
         """
         weight_values must be inputted for all trainable variables in the graph
+        NOTE: WILLCODE
         """
         assign_op = [var.assign(val) for var, val in zip(self.weights, weight_values)]
         self.sess.run(assign_op)
@@ -298,7 +306,7 @@ class Agent(object):
             self.sy_target_n = tf.placeholder(shape=[None], name="target", dtype=tf.float32) 
             baseline_loss = tf.nn.l2_loss(self.baseline_prediction - self.sy_target_n)
             self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(baseline_loss)
-
+        #NOTE: WILLCODE
         self.weights = tf.trainable_variables()
 
     def sample_trajectories(self, itr, env):
@@ -547,11 +555,11 @@ class Agent(object):
 
 # runs agent for n_iter gradient steps
 # TODO: check if n_grad_steps is accurate name
-def run_agent(agent, env, n_grad_steps):
+def run_agent(agent, env, n_grad_steps, comm_iter):
     start = time.time()
     total_timesteps = 0
     for itr in range(n_grad_steps):
-        print("********** Iteration %i ************" % itr)
+        print("********** Comm Iteration {} Total {} ************".format(comm_iter, comm_iter*n_grad_steps+itr))
         paths, timesteps_this_batch = agent.sample_trajectories(itr, env)
         total_timesteps += timesteps_this_batch
 
@@ -568,6 +576,7 @@ def run_agent(agent, env, n_grad_steps):
         returns = [path["reward"].sum() for path in paths]
         ep_lengths = [pathlength(path) for path in paths]
         logz.log_tabular("Time", time.time() - start)
+        logz.log_tabular("CommunicationRound", comm_iter)
         logz.log_tabular("Iteration", itr)
         logz.log_tabular("AverageReturn", np.mean(returns))
         logz.log_tabular("StdReturn", np.std(returns))
@@ -580,6 +589,7 @@ def run_agent(agent, env, n_grad_steps):
         logz.dump_tabular()
         logz.pickle_tf_vars()
 
+#NOTE: WILLCODE
 #TODO: use kwargs
 # def init_agent(computation_graph_args, sample_trajectory_args, estimate_return_args):
 #     return Agent(computation_graph_args, sample_trajectory_args, estimate_return_args)
@@ -600,7 +610,9 @@ def compute_average_weights(all_weights):
 def train_FED(
         exp_name, # skip
         env_name,
-        n_iter, # skip
+        n_comm_iter,
+        g_iter,
+        n_clients,
         gamma,
         min_timesteps_per_batch,
         max_path_length,
@@ -612,12 +624,12 @@ def train_FED(
         nn_baseline,
         seed,
         n_layers,
-        size):
+        size
+        ):
     NUMBER_OF_AGENTS = 3
     #========================================================================================#
     # Set Up Logger
     #========================================================================================#
-    setup_logger(logdir, locals())
 
     # Make the gym environment for sake of gathering env data
     # will need to make env for each individual
@@ -658,8 +670,8 @@ def train_FED(
         'normalize_advantages': normalize_advantages,
     }
 
-    agents = [Agent(computation_graph_args, sample_trajectory_args, estimate_return_args) for _ in range(NUMBER_OF_AGENTS)]
-
+    agents = [Agent(computation_graph_args, sample_trajectory_args, estimate_return_args, agent_i, logdir) for agent_i in range(n_clients)]
+    # NOTE: WILLCODE
     # build computation graph
     [a.build_computation_graph() for a in agents]
 
@@ -667,12 +679,12 @@ def train_FED(
     [a.init_tf_sess() for a in agents]
 
     #========================================================================================#
-    # Training Loop
+    # Training Loop NOTE: WILLCODE
     #========================================================================================#
     # TODO: parallelize, may neec to make seperate envs
-    for its in range(n_iter):
+    for comm_iter in range(n_comm_iter):
         # each agent samples trajectories
-        [run_agent(a, env, 1) for a in agents]
+        [run_agent(a, env, g_iter, comm_iter) for a in agents]
 
         # gather all weights
         all_weights = [a.get_weights() for a in agents]
@@ -711,8 +723,10 @@ def main():
     parser.add_argument('--exp_name', type=str, default='vpg')
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--discount', type=float, default=1.0)
-    parser.add_argument('--n_iter', '-n', type=int, default=100)
-    parser.add_argument('--batch_size', '-b', type=int, default=1000)
+    parser.add_argument('--n_comm_iter', '-c', type=int, default=100)
+    parser.add_argument('--g_iter', '-g', type=int, default=10)
+    parser.add_argument('--n_clients', '-n', type=int, default=10)
+    parser.add_argument('--batch_size', '-b', type=int, default=100)
     parser.add_argument('--ep_len', '-ep', type=float, default=-1.)
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-3)
     parser.add_argument('--reward_to_go', '-rtg', action='store_true')
@@ -740,7 +754,9 @@ def main():
         train_FED(
             exp_name=args.exp_name,
             env_name=args.env_name,
-            n_iter=args.n_iter,
+            n_comm_iter=args.n_comm_iter,
+            n_clients=args.n_clients,
+            g_iter=args.g_iter,
             gamma=args.discount,
             min_timesteps_per_batch=args.batch_size,
             max_path_length=max_path_length,
@@ -752,13 +768,14 @@ def main():
             nn_baseline=args.nn_baseline, 
             seed=seed,
             n_layers=args.n_layers,
-            size=args.size
+            size=args.size,
             )
+    train_func()
     # # Awkward hacky process runs, because Tensorflow does not like
     # # repeatedly calling train_FED in the same thread.
-    p = Process(target=train_func, args=tuple())
-    p.start()
-    processes.append(p)
+    # p = Process(target=train_func, args=tuple())
+    # p.start()
+    # processes.append(p)
     # if you comment in the line below, then the loop will block 
     # until this process finishes
     # p.join()
