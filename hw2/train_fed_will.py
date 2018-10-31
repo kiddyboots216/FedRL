@@ -588,7 +588,7 @@ def run_agent(agent, env, n_grad_steps, comm_iter, agent_id):
         logz.log_tabular("TimestepsSoFar", total_timesteps)
         logz.dump_tabular()
         logz.pickle_tf_vars()
-
+    return np.mean(returns)
 #NOTE: WILLCODE
 #TODO: use kwargs
 # def init_agent(computation_graph_args, sample_trajectory_args, estimate_return_args):
@@ -598,12 +598,19 @@ def run_agent(agent, env, n_grad_steps, comm_iter, agent_id):
 # list of the weights of each agent's model
 # each agent has a list of weights for each layer of their model
 # [[A1_W1, A1_W2], [A2_W1, A2_W2], [A3_W1, A3_W2]]
-def compute_average_weights(all_weights):
+def compute_average_weights(all_weights, avg_returns, n_clients):
     averaged = []
     number_of_variables = len(all_weights[0])
     # iterate through each model layer and average them
     for i in range(number_of_variables):
-        averaged.append(np.mean([weights[i] for weights in all_weights], axis=0))
+        weighted_weights = []
+        for j in range(n_clients):
+            weighted_weights.append(np.divide(
+                np.multiply(
+                    all_weights[j][i], avg_returns[j]
+                ), np.sum(avg_returns)
+            ))
+        averaged.append(np.mean(weighted_weights))
     return averaged
 
 
@@ -683,13 +690,13 @@ def train_FED(
     # TODO: parallelize, may neec to make seperate envs
     for comm_iter in range(n_comm_iter):
         # each agent samples trajectories
-        [run_agent(agents[i], env, g_iter, comm_iter, i) for i in range(n_clients)]
+        avg_returns = [run_agent(agents[i], env, g_iter, comm_iter, i) for i in range(n_clients)]
 
         # gather all weights
         all_weights = [a.get_weights() for a in agents]
 
         # compute average weight
-        avg_weights = compute_average_weights(all_weights)
+        avg_weights = compute_average_weights(all_weights, avg_returns, n_clients)
         
         # set weights of all agents
         [a.set_weights(avg_weights) for a in agents]
