@@ -694,12 +694,12 @@ def train_FED(
         # set weights of all agents
         [a.set_weights(avg_weights) for a in agents]
 
-
-    # weights = agent.get_weights()
-    # print("INITIAL")
-    # print("length", len(weights))
-    # [print(x.shape) for x in weights]
-    # print("bias 1", weights[1])
+        # print weights of all agents
+        for a in agents:
+            weights = a.get_weights()
+            print("FINAL")
+            [print(x.shape) for x in weights]
+            print("bias 1", weights[1])
 
     # zeroed_weights = [np.ones(w.shape) for w in weights]
 
@@ -725,13 +725,13 @@ def main():
     parser.add_argument('--n_comm_iter', '-c', type=int, default=100)
     parser.add_argument('--g_iter', '-g', type=int, default=10)
     parser.add_argument('--n_clients', '-n', type=int, default=10)
-    parser.add_argument('--batch_size', '-b', type=int, default=100)
+    parser.add_argument('--batch_size', '-b', type=int, default=5000)
     parser.add_argument('--ep_len', '-ep', type=float, default=-1.)
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-3)
     parser.add_argument('--reward_to_go', '-rtg', action='store_true')
     parser.add_argument('--dont_normalize_advantages', '-dna', action='store_true')
     parser.add_argument('--nn_baseline', '-bl', action='store_true')
-    parser.add_argument('--seed', type=int, default=1)
+    parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--n_experiments', '-e', type=int, default=1)
     parser.add_argument('--n_layers', '-l', type=int, default=2)
     parser.add_argument('--size', '-s', type=int, default=64)
