@@ -89,7 +89,8 @@ class Agent(object):
         self.nn_baseline = estimate_return_args['nn_baseline']
         self.normalize_advantages = estimate_return_args['normalize_advantages']
         # TODO: fix this hack to have different scopes
-        self.scope = str(time.time())
+        self.scope = "agent_{}".format(agent_i)
+        self.graph = tf.Graph()
 
 
     def get_weights(self):
@@ -103,12 +104,13 @@ class Agent(object):
         weight_values must be inputted for all trainable variables in the graph
         NOTE: WILLCODE
         """
-        assign_op = [var.assign(val) for var, val in zip(self.weights, weight_values)]
-        self.sess.run(assign_op)
+        with self.graph.as_default():
+            assign_op = [var.assign(val) for var, val in zip(self.weights, weight_values)]
+            self.sess.run(assign_op)
 
     def init_tf_sess(self):
         tf_config = tf.ConfigProto(inter_op_parallelism_threads=1, intra_op_parallelism_threads=1) 
-        self.sess = tf.Session(config=tf_config)
+        self.sess = tf.Session(config=tf_config, graph=self.graph)
         self.sess.__enter__() # equivalent to `with self.sess:`
         tf.global_variables_initializer().run() #pylint: disable=E1101
 
@@ -267,47 +269,48 @@ class Agent(object):
             loss: a function of self.sy_logprob_n and self.sy_adv_n that we will differentiate
                 to get the policy gradient.
         """
-        self.sy_ob_no, self.sy_ac_na, self.sy_adv_n = self.define_placeholders()
+        with self.graph.as_default():
+            self.sy_ob_no, self.sy_ac_na, self.sy_adv_n = self.define_placeholders()
 
-        # The policy takes in an observation and produces a distribution over the action space
-        self.policy_parameters = self.policy_forward_pass(self.sy_ob_no)
+            # The policy takes in an observation and produces a distribution over the action space
+            self.policy_parameters = self.policy_forward_pass(self.sy_ob_no)
 
-        # We can sample actions from this action distribution.
-        # This will be called in Agent.sample_trajectory() where we generate a rollout.
-        self.sy_sampled_ac = self.sample_action(self.policy_parameters)
+            # We can sample actions from this action distribution.
+            # This will be called in Agent.sample_trajectory() where we generate a rollout.
+            self.sy_sampled_ac = self.sample_action(self.policy_parameters)
 
-        # We can also compute the logprob of the actions that were actually taken by the policy
-        # This is used in the loss function.
-        self.sy_logprob_n = self.get_log_prob(self.policy_parameters, self.sy_ac_na)
+            # We can also compute the logprob of the actions that were actually taken by the policy
+            # This is used in the loss function.
+            self.sy_logprob_n = self.get_log_prob(self.policy_parameters, self.sy_ac_na)
 
-        #========================================================================================#
-        #                           ----------PROBLEM 2----------
-        # Loss Function and Training Operation
-        #========================================================================================#
-        loss = -tf.reduce_mean(self.sy_logprob_n * self.sy_adv_n)
+            #========================================================================================#
+            #                           ----------PROBLEM 2----------
+            # Loss Function and Training Operation
+            #========================================================================================#
+            loss = -tf.reduce_mean(self.sy_logprob_n * self.sy_adv_n)
 
-        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
+            self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
 
-        #========================================================================================#
-        #                           ----------PROBLEM 6----------
-        # Optional Baseline
-        #
-        # Define placeholders for targets, a loss function and an update op for fitting a 
-        # neural network baseline. These will be used to fit the neural network baseline. 
-        #========================================================================================#
-        if self.nn_baseline:
-            self.baseline_prediction = tf.squeeze(build_mlp(
-                                    self.sy_ob_no, 
-                                    1, 
-                                    "nn_baseline",
-                                    n_layers=self.n_layers,
-                                    size=self.size))
-            # YOUR_CODE_HERE
-            self.sy_target_n = tf.placeholder(shape=[None], name="target", dtype=tf.float32) 
-            baseline_loss = tf.nn.l2_loss(self.baseline_prediction - self.sy_target_n)
-            self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(baseline_loss)
-        #NOTE: WILLCODE
-        self.weights = tf.trainable_variables()
+            #========================================================================================#
+            #                           ----------PROBLEM 6----------
+            # Optional Baseline
+            #
+            # Define placeholders for targets, a loss function and an update op for fitting a 
+            # neural network baseline. These will be used to fit the neural network baseline. 
+            #========================================================================================#
+            if self.nn_baseline:
+                self.baseline_prediction = tf.squeeze(build_mlp(
+                                        self.sy_ob_no, 
+                                        1, 
+                                        "nn_baseline",
+                                        n_layers=self.n_layers,
+                                        size=self.size))
+                # YOUR_CODE_HERE
+                self.sy_target_n = tf.placeholder(shape=[None], name="target", dtype=tf.float32) 
+                baseline_loss = tf.nn.l2_loss(self.baseline_prediction - self.sy_target_n)
+                self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(baseline_loss)
+            #NOTE: WILLCODE
+            self.weights = tf.trainable_variables()
 
     def sample_trajectories(self, itr, env):
         # Collect paths until we have enough timesteps
@@ -676,20 +679,26 @@ def train_FED(
 
     # tensorflow: config, session, variable initialization
     [a.init_tf_sess() for a in agents]
-
+    [print(agent.sess) for agent in agents]
+    [print("printing vars:", x) for x in tf.trainable_variables()]
     #========================================================================================#
     # Training Loop NOTE: WILLCODE
     #========================================================================================#
     # TODO: parallelize, may neec to make seperate envs
     for comm_iter in range(n_comm_iter):
         # each agent samples trajectories
-        [run_agent(agents[i], env, g_iter, comm_iter, i) for i in range(n_clients)]
+        for i in range(n_clients):
+            run_agent(agents[i], env, g_iter, comm_iter, i) 
+           
 
         # gather all weights
         all_weights = [a.get_weights() for a in agents]
+        for i in range(len(all_weights)):
+            print("bias 1 for agent {}".format(i), all_weights[i][1])
 
         # compute average weight
         avg_weights = compute_average_weights(all_weights)
+        # avg_weights = [0 * w for w in avg_weights]
         
         # set weights of all agents
         [a.set_weights(avg_weights) for a in agents]
