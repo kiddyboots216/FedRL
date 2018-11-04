@@ -1,0 +1,2 @@
+Time	Agent	Iteration	AverageReturn	StdReturn	MaxReturn	MinReturn	EpLenMean	EpLenStd	TimestepsThisBatch	TimestepsSoFar
+0.9322268962860107	0	0	18.977272	9.413052	75.0	8.0	18.977272727272727	9.413051794032315	5010	5010
