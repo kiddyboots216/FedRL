@@ -289,8 +289,9 @@ class Agent(object):
             # Loss Function and Training Operation
             #========================================================================================#
             loss = -tf.reduce_mean(self.sy_logprob_n * self.sy_adv_n)
-
-            self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
+            optimizer = tf.train.AdamOptimizer(self.learning_rate, name='update_op')
+            self.reset_optimizer_update = tf.variables_initializer(optimizer.variables())
+            self.update_op = optimizer.minimize(loss)
 
             #========================================================================================#
             #                           ----------PROBLEM 6----------
@@ -309,7 +310,9 @@ class Agent(object):
                 # YOUR_CODE_HERE
                 self.sy_target_n = tf.placeholder(shape=[None], name="target", dtype=tf.float32) 
                 baseline_loss = tf.nn.l2_loss(self.baseline_prediction - self.sy_target_n)
-                self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(baseline_loss)
+                optimizer = tf.train.AdamOptimizer(self.learning_rate, name='baseline_update_op')
+                self.reset_optimizer_baseline_update = tf.variables_initializer(optimizer.variables())
+                self.baseline_update_op = optimizer.minimize(baseline_loss)
             #NOTE: WILLCODE
             self.weights = tf.trainable_variables()
 
@@ -623,34 +626,14 @@ def compute_reward_weighted_avg_weights(all_weights, avg_returns, n_clients):
     printing vars: <tf.Variable 'agent_0/dense_2/kernel:0' shape=(64, 2) dtype=float32_ref>
     printing vars: <tf.Variable 'agent_0/dense_2/bias:0' shape=(2,) dtype=float32_ref>
     """
-    # print(np.shape(all_weights))
-    # print(np.shape(avg_returns))
-    # print(np.shape(avg_returns))
 
-    variable_weights = []
-    number_of_variables = len(all_weights[0])
     temp = np.array([np.multiply(all_weights[c], avg_returns[c]) for c in range(n_clients)])
-    # print(np.shape(temp))
     summed_weights = sum(temp)
-    # print(np.shape(summed_weights))
     summed_rewards = sum(avg_returns)
-    # print(np.shape(summed_rewards))
     return np.divide(summed_weights, summed_rewards)
-    # for i in range(number_of_variables):
-    #     reward_weighted_agent_weights = []
-    #     for j in range(n_clients):
-    #         client_weights = all_weights[j]
-    #         client_variable_weights = client_weights[i]
-    #         client_rewards = avg_returns[j]
-    #         reward_weighted_agent_weights.append(
-    #             np.divide(
-    #                 np.multiply(client_variable_weights, client_rewards), 
-    #                 sum(avg_returns)
-    #             )
-    #         )
-    #     variable_weights.append(np.mean(reward_weighted_agent_weights))
-    # return variable_weights
 
+def compute_max_reward_weights(all_weights, avg_returns, n_clients):
+    return all_weights[np.argmax(avg_returns)]
 
 def train_FED(
         exp_name, # skip
@@ -741,15 +724,18 @@ def train_FED(
 
         # compute average weight
         # avg_weights = compute_average_weights(all_weights)
-        reward_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns, n_clients)
-
+        # reward_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns, n_clients)
+        max_weights = compute_max_reward_weights(all_weights, avg_returns, n_clients)
         # for i in range(len(reward_weights)):
         #     print("layer {}".format(i), reward_weights[i])
         # avg_weights = [0 * w for w in avg_weights]
         
         # set weights of all agents
-        [a.set_weights(reward_weights) for a in agents]
+        [a.set_weights(max_weights) for a in agents]
 
+        # reset ADAM
+        [a.sess.run(a.reset_optimizer_update) for a in agents]
+        [a.sess.run(a.reset_optimizer_baseline_update) if a.nn_baseline else None for a in agents]
         # print weights of all agents
         # for a in agents:
         #     weights = a.get_weights()
