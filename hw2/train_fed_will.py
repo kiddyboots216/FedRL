@@ -68,11 +68,12 @@ def setup_logger(logdir, locals_):
 #============================================================================================#
 
 class Agent(object):
-    def __init__(self, computation_graph_args, sample_trajectory_args, estimate_return_args, agent_i, logdir):
+    def __init__(self, computation_graph_args, sample_trajectory_args, estimate_return_args, agent_i, logdir, logger=False):
         super(Agent, self).__init__()
         logdir=os.path.join(logdir,'%d'%agent_i)
-        # setup_logger will overwrite the logdir 
-        setup_logger(logdir, locals())
+        # setup_logger will overwrite the logdir
+        if (logger):
+            setup_logger(logdir, locals())
         self.ob_dim = computation_graph_args['ob_dim']
         self.ac_dim = computation_graph_args['ac_dim']
         self.discrete = computation_graph_args['discrete']
@@ -502,6 +503,10 @@ class Agent(object):
         if self.normalize_advantages:
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1.
+            if (np.std(adv_n) == 0):
+                print(adv_n)
+                print(np.mean(adv_n))
+                print(np.std(adv_n))
             adv_n = (adv_n - np.mean(adv_n)) / np.std(adv_n)
         return q_n, adv_n
 
@@ -591,7 +596,7 @@ def run_agent(agent, env, n_grad_steps, comm_iter, agent_id):
         logz.log_tabular("TimestepsSoFar", total_timesteps)
         logz.dump_tabular()
         logz.pickle_tf_vars()
-
+    return np.mean(returns)
 #NOTE: WILLCODE
 #TODO: use kwargs
 # def init_agent(computation_graph_args, sample_trajectory_args, estimate_return_args):
@@ -608,6 +613,43 @@ def compute_average_weights(all_weights):
     for i in range(number_of_variables):
         averaged.append(np.mean([weights[i] for weights in all_weights], axis=0))
     return averaged
+
+def compute_reward_weighted_avg_weights(all_weights, avg_returns, n_clients):
+    """
+    printing vars: <tf.Variable 'agent_0/dense/kernel:0' shape=(4, 64) dtype=float32_ref>
+    printing vars: <tf.Variable 'agent_0/dense/bias:0' shape=(64,) dtype=float32_ref>
+    printing vars: <tf.Variable 'agent_0/dense_1/kernel:0' shape=(64, 64) dtype=float32_ref>
+    printing vars: <tf.Variable 'agent_0/dense_1/bias:0' shape=(64,) dtype=float32_ref>
+    printing vars: <tf.Variable 'agent_0/dense_2/kernel:0' shape=(64, 2) dtype=float32_ref>
+    printing vars: <tf.Variable 'agent_0/dense_2/bias:0' shape=(2,) dtype=float32_ref>
+    """
+    # print(np.shape(all_weights))
+    # print(np.shape(avg_returns))
+    # print(np.shape(avg_returns))
+
+    variable_weights = []
+    number_of_variables = len(all_weights[0])
+    temp = np.array([np.multiply(all_weights[c], avg_returns[c]) for c in range(n_clients)])
+    # print(np.shape(temp))
+    summed_weights = sum(temp)
+    # print(np.shape(summed_weights))
+    summed_rewards = sum(avg_returns)
+    # print(np.shape(summed_rewards))
+    return np.divide(summed_weights, summed_rewards)
+    # for i in range(number_of_variables):
+    #     reward_weighted_agent_weights = []
+    #     for j in range(n_clients):
+    #         client_weights = all_weights[j]
+    #         client_variable_weights = client_weights[i]
+    #         client_rewards = avg_returns[j]
+    #         reward_weighted_agent_weights.append(
+    #             np.divide(
+    #                 np.multiply(client_variable_weights, client_rewards), 
+    #                 sum(avg_returns)
+    #             )
+    #         )
+    #     variable_weights.append(np.mean(reward_weighted_agent_weights))
+    # return variable_weights
 
 
 def train_FED(
@@ -672,7 +714,8 @@ def train_FED(
         'normalize_advantages': normalize_advantages,
     }
 
-    agents = [Agent(computation_graph_args, sample_trajectory_args, estimate_return_args, agent_i, logdir) for agent_i in range(n_clients)]
+    agents = [Agent(computation_graph_args, sample_trajectory_args, estimate_return_args, agent_i, logdir) for agent_i in range(n_clients-1)]
+    agents.append(Agent(computation_graph_args, sample_trajectory_args, estimate_return_args, n_clients-1, logdir, logger=True))
     # NOTE: WILLCODE
     # build computation graph
     [a.build_computation_graph() for a in agents]
@@ -685,30 +728,34 @@ def train_FED(
     # Training Loop NOTE: WILLCODE
     #========================================================================================#
     # TODO: parallelize, may neec to make seperate envs
+    uniform_random_initialization = agents[0].get_weights()
+    [a.set_weights(uniform_random_initialization) for a in agents]
     for comm_iter in range(n_comm_iter):
         # each agent samples trajectories
-        for i in range(n_clients):
-            run_agent(agents[i], env, g_iter, comm_iter, i) 
-           
+        avg_returns = [run_agent(agents[i], env, g_iter, comm_iter, i) for i in range(n_clients)]           
 
         # gather all weights
         all_weights = [a.get_weights() for a in agents]
-        for i in range(len(all_weights)):
-            print("bias 1 for agent {}".format(i), all_weights[i][1])
+        # for i in range(len(all_weights)):
+        #     print("bias 1 for agent {}".format(i), all_weights[i][1])
 
         # compute average weight
-        avg_weights = compute_average_weights(all_weights)
+        # avg_weights = compute_average_weights(all_weights)
+        reward_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns, n_clients)
+
+        # for i in range(len(reward_weights)):
+        #     print("layer {}".format(i), reward_weights[i])
         # avg_weights = [0 * w for w in avg_weights]
         
         # set weights of all agents
-        [a.set_weights(avg_weights) for a in agents]
+        [a.set_weights(reward_weights) for a in agents]
 
         # print weights of all agents
-        for a in agents:
-            weights = a.get_weights()
-            print("FINAL")
-            [print(x.shape) for x in weights]
-            print("bias 1", weights[1])
+        # for a in agents:
+        #     weights = a.get_weights()
+        #     print("FINAL")
+        #     [print(x.shape) for x in weights]
+            # print("bias 1", weights[1])
 
     # zeroed_weights = [np.ones(w.shape) for w in weights]
 
@@ -755,38 +802,41 @@ def main():
 
     max_path_length = args.ep_len if args.ep_len > 0 else None
 
-    seed = args.seed
-    print('Running experiment with seed %d'%seed)
+    processes = []
 
-    def train_func():
-        train_FED(
-            exp_name=args.exp_name,
-            env_name=args.env_name,
-            n_comm_iter=args.n_comm_iter,
-            n_clients=args.n_clients,
-            g_iter=args.g_iter,
-            gamma=args.discount,
-            min_timesteps_per_batch=args.batch_size,
-            max_path_length=max_path_length,
-            learning_rate=args.learning_rate,
-            reward_to_go=args.reward_to_go,
-            animate=args.render,
-            logdir=os.path.join(logdir,'%d'%seed),
-            normalize_advantages=not(args.dont_normalize_advantages),
-            nn_baseline=args.nn_baseline, 
-            seed=seed,
-            n_layers=args.n_layers,
-            size=args.size,
-            )
-    train_func()
-    # # Awkward hacky process runs, because Tensorflow does not like
-    # # repeatedly calling train_FED in the same thread.
-    # p = Process(target=train_func, args=tuple())
-    # p.start()
-    # processes.append(p)
-    # if you comment in the line below, then the loop will block 
-    # until this process finishes
-    # p.join()
+    for e in range(args.n_experiments):
+        seed = args.seed + 10*e
+        print('Running experiment with seed %d'%seed)
+
+        def train_func():
+            train_FED(
+                exp_name=args.exp_name,
+                env_name=args.env_name,
+                n_comm_iter=args.n_comm_iter,
+                n_clients=args.n_clients,
+                g_iter=args.g_iter,
+                gamma=args.discount,
+                min_timesteps_per_batch=args.batch_size,
+                max_path_length=max_path_length,
+                learning_rate=args.learning_rate,
+                reward_to_go=args.reward_to_go,
+                animate=args.render,
+                logdir=os.path.join(logdir,'%d'%seed),
+                normalize_advantages=not(args.dont_normalize_advantages),
+                nn_baseline=args.nn_baseline, 
+                seed=seed,
+                n_layers=args.n_layers,
+                size=args.size,
+                )
+        # train_func()
+        # # Awkward hacky process runs, because Tensorflow does not like
+        # # repeatedly calling train_FED in the same thread.
+        p = Process(target=train_func, args=tuple())
+        p.start()
+        processes.append(p)
+        # if you comment in the line below, then the loop will block 
+        # until this process finishes
+        # p.join()
 
 if __name__ == "__main__":
     main()
