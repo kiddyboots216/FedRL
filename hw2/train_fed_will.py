@@ -627,7 +627,6 @@ def compute_reward_weighted_avg_weights(all_weights, avg_returns, n_clients):
     # print(np.shape(avg_returns))
     # print(np.shape(avg_returns))
 
-    variable_weights = []
     number_of_variables = len(all_weights[0])
     temp = np.array([np.multiply(all_weights[c], avg_returns[c]) for c in range(n_clients)])
     # print(np.shape(temp))
