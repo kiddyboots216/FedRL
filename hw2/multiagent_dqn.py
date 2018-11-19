@@ -68,6 +68,10 @@ if __name__ == "__main__":
         summed_rewards = sum(avg_returns)
         return np.divide(summed_weights, summed_rewards)
 
+    def compute_max_reward_weights(all_weights, avg_returns):
+        all_weights = [weight.get("dqn_policy") for weight in all_weights]
+        return all_weights[np.argmax(avg_returns)]
+
     for i in range(args.num_iters):
         print("== Iteration", i, "==")
         results = []
@@ -82,7 +86,7 @@ if __name__ == "__main__":
         # compute average weight
         # new_weights = compute_average_weights(all_weights)
         avg_returns = [result['episode_reward_mean'] for result in results]
-        new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
-        # new_weights = compute_max_reward_weights(all_weights, avg_returns, n_clients)
+        # new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
+        new_weights = compute_max_reward_weights(all_weights, avg_returns)
         # set weights of all agents
         [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
