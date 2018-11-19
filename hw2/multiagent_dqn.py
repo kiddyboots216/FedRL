@@ -20,9 +20,12 @@ from ray.rllib.test.test_multi_agent_env import MultiCartpole
 from ray.tune.logger import pretty_print
 from ray.tune.registry import register_env
 
+REWARD, NAIVE, INDEPENDENT, MAX = 'reward', 'naive', 'independent', 'max'
+CHOICES = [REWARD, NAIVE, INDEPENDENT]
 parser = argparse.ArgumentParser()
 parser.add_argument("--num-trainers", type=int, default=2)
 parser.add_argument("--num-iters", type=int, default=20)
+parser.add_argument('--strategy', type=str, choices=CHOICES, default=INDEPENDENT)
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -79,10 +82,17 @@ if __name__ == "__main__":
             results.append(result)
         # gather all weights
         all_weights = [t.get_weights(["dqn_policy"]) for t in trainers]
-        # compute average weight
-        # new_weights = compute_average_weights(all_weights)
+
         avg_returns = [result['episode_reward_mean'] for result in results]
-        new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
+        if args.strategy == INDEPENDENT:
+            new_weights = all_weights
+        if args.strategy == NAIVE:
+            new_weights = compute_average_weights(all_weights)
+        elif args.strategy == REWARD:
+            new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
+        elif args.strategy == MAX:
+            new_weights = compute_max_reward_weights(all_weights, avg_returns, n_clients)
+        
         # new_weights = compute_max_reward_weights(all_weights, avg_returns, n_clients)
         # set weights of all agents
         [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
