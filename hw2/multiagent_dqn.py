@@ -21,11 +21,11 @@ from ray.tune.logger import pretty_print
 from ray.tune.registry import register_env
 
 REWARD, NAIVE, INDEPENDENT, MAX = 'reward', 'naive', 'independent', 'max'
-CHOICES = [REWARD, NAIVE, INDEPENDENT]
+CHOICES = [REWARD, NAIVE, INDEPENDENT, MAX]
 parser = argparse.ArgumentParser()
 parser.add_argument("--num-trainers", type=int, default=2)
 parser.add_argument("--num-iters", type=int, default=20)
-parser.add_argument('--strategy', type=str, choices=CHOICES, default=INDEPENDENT)
+parser.add_argument('--strategy', '-s', type=str, choices=CHOICES, default=INDEPENDENT)
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -84,21 +84,18 @@ if __name__ == "__main__":
             result = trainer.train()
             print(pretty_print(result))
             results.append(result)
-        # gather all weights
-        all_weights = [t.get_weights(["dqn_policy"]) for t in trainers]
-
-        avg_returns = [result['episode_reward_mean'] for result in results]
-        if args.strategy == INDEPENDENT:
-            new_weights = all_weights
-        if args.strategy == NAIVE:
-            new_weights = compute_average_weights(all_weights)
-        elif args.strategy == REWARD:
-            new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
-        elif args.strategy == MAX:
-            new_weights = compute_max_reward_weights(all_weights, avg_returns, n_clients)
         
-        # new_weights = compute_max_reward_weights(all_weights, avg_returns, n_clients)
-        # new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
-        new_weights = compute_max_reward_weights(all_weights, avg_returns)
-        # set weights of all agents
-        [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
+        # if INDEPENDENT, agemnt weights do not need to be modified
+        if args.strategy != INDEPENDENT:
+            # gather all weights
+            all_weights = [t.get_weights(["dqn_policy"]) for t in trainers]
+
+            avg_returns = [result['episode_reward_mean'] for result in results]
+            if args.strategy == NAIVE:
+                new_weights = compute_average_weights(all_weights)
+            elif args.strategy == REWARD:
+                new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
+            elif args.strategy == MAX:
+                new_weights = compute_max_reward_weights(all_weights, avg_returns)
+            
+            [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
