@@ -74,7 +74,10 @@ if __name__ == "__main__":
     def compute_max_reward_weights(all_weights, avg_returns):
         all_weights = [weight.get("dqn_policy") for weight in all_weights]
         return all_weights[np.argmax(avg_returns)]
-
+    t = trainers[0]
+    new_weights = [t.get_weights(["dqn_policy"])]
+    new_weights = compute_average_weights(new_weights)
+    [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
     for i in range(args.num_iters):
         print("== Iteration", i, "==")
         results = []
