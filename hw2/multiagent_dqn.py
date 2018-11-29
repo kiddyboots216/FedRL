@@ -27,6 +27,7 @@ parser.add_argument("--num-trainers", type=int, default=2)
 parser.add_argument("--num-iters", type=int, default=20)
 parser.add_argument('--strategy', '-s', type=str, choices=CHOICES, default=INDEPENDENT)
 parser.add_argument('--timesteps_per_iteration', '-tsteps', type=int, default=1000)
+parser.add_argument('--target_network_update_freq', '-target_freq', type=int, default=500)
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -55,6 +56,7 @@ if __name__ == "__main__":
         "gamma": 0.95,
         "n_step": 3,
         "timesteps_per_iteration": args.timesteps_per_iteration,
+        "target_network_update_freq": args.target_network_update_freq,
     }) for _ in range(args.num_trainers)]
 
     def compute_average_weights(all_weights):
