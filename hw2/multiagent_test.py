@@ -20,14 +20,9 @@ from ray.rllib.test.test_multi_agent_env import MultiCartpole
 from ray.tune.logger import pretty_print
 from ray.tune.registry import register_env
 
-REWARD, NAIVE, INDEPENDENT, MAX = 'reward', 'naive', 'independent', 'max'
-CHOICES = [REWARD, NAIVE, INDEPENDENT, MAX]
 parser = argparse.ArgumentParser()
 parser.add_argument("--num-trainers", type=int, default=2)
 parser.add_argument("--num-iters", type=int, default=20)
-parser.add_argument('--strategy', '-s', type=str, choices=CHOICES, default=INDEPENDENT)
-parser.add_argument('--timesteps_per_iteration', '-tsteps', type=int, default=1000)
-parser.add_argument('--target_network_update_freq', '-target_freq', type=int, default=500)
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -55,8 +50,6 @@ if __name__ == "__main__":
         },
         "gamma": 0.95,
         "n_step": 3,
-        "timesteps_per_iteration": args.timesteps_per_iteration,
-        "target_network_update_freq": args.target_network_update_freq,
     }) for _ in range(args.num_trainers)]
 
     def compute_average_weights(all_weights):
@@ -75,13 +68,6 @@ if __name__ == "__main__":
         summed_rewards = sum(avg_returns)
         return np.divide(summed_weights, summed_rewards)
 
-    def compute_max_reward_weights(all_weights, avg_returns):
-        all_weights = [weight.get("dqn_policy") for weight in all_weights]
-        return all_weights[np.argmax(avg_returns)]
-    t = trainers[0]
-    new_weights = [t.get_weights(["dqn_policy"])]
-    new_weights = compute_average_weights(new_weights)
-    [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
     for i in range(args.num_iters):
         print("== Iteration", i, "==")
         results = []
@@ -91,18 +77,12 @@ if __name__ == "__main__":
             result = trainer.train()
             print(pretty_print(result))
             results.append(result)
-        
-        # if INDEPENDENT, agemnt weights do not need to be modified
-        if args.strategy != INDEPENDENT:
-            # gather all weights
-            all_weights = [t.get_weights(["dqn_policy"]) for t in trainers]
-
-            avg_returns = [result['episode_reward_mean'] for result in results]
-            if args.strategy == NAIVE:
-                new_weights = compute_average_weights(all_weights)
-            elif args.strategy == REWARD:
-                new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
-            elif args.strategy == MAX:
-                new_weights = compute_max_reward_weights(all_weights, avg_returns)
-            
-            [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
+        # gather all weights
+        all_weights = [t.get_weights(["dqn_policy"]) for t in trainers]
+        # compute average weight
+        # new_weights = compute_average_weights(all_weights)
+        avg_returns = [result['episode_reward_mean'] for result in results]
+        new_weights = compute_reward_weighted_avg_weights(all_weights, avg_returns)
+        # new_weights = compute_max_reward_weights(all_weights, avg_returns, n_clients)
+        # set weights of all agents
+        [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
