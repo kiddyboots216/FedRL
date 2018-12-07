@@ -1,13 +1,6 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-"""Example of using two different training methods at once in multi-agent.
-Here we create a number of CartPole agents, some of which are trained with
-DQN, and some of which are trained with PPO. We periodically sync weights
-between the two trainers (note that no such syncing is needed when using just
-a single training method).
-For a simpler example, see also: multiagent_cartpole.py
-"""
 
 import argparse
 import gym
@@ -35,35 +28,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
     ray.init()
 
-    # Simple environment with 1 cartpole
-    register_env("multi_cartpole", lambda _: MultiCartpole(1))
-    single_env = gym.make("CartPole-v0")
-    obs_space = single_env.observation_space
-    act_space = single_env.action_space
-    
-    policy_graphs = {
-        "dqn_policy": (DQNPolicyGraph, obs_space, act_space, {})
-    }
-    def policy_mapping_fn(agent_id):
-        return "dqn_policy"
-
     trainers = [DQNAgent(
-    env="multi_cartpole",
+    env=args.env, 
     config={
-        "multiagent": {
-            "policy_graphs": policy_graphs,
-            "policy_mapping_fn": policy_mapping_fn,
-            "policies_to_train": ["dqn_policy"],
-        },
         "gamma": 0.95,
-        "n_step": 3,
+        "n_step": 3, # is this neccesary? Default is 1
         "timesteps_per_iteration": args.timesteps_per_iteration,
         "target_network_update_freq": args.target_network_update_freq,
     }) for _ in range(args.num_trainers)]
 
-    t = trainers[0]
-    new_weights = t.get_weights(["dqn_policy"]).get("dqn_policy")
-    [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
+    new_weights = trainers[0].get_weights(["default"]).get("default")
+    [t.set_weights({"default": new_weights}) for t in trainers]
     for i in range(args.num_iters):
         print("== Iteration", i, "==")
         results = []
@@ -77,7 +52,7 @@ if __name__ == "__main__":
         # if INDEPENDENT, agemnt weights do not need to be modified
         if args.strategy != INDEPENDENT:
             # gather all weights
-            all_weights = [t.get_weights(["dqn_policy"]).get("dqn_policy") for t in trainers]
+            all_weights = [t.get_weights(["default"]).get("default") for t in trainers]
 
             avg_returns = [result['episode_reward_mean'] for result in results]
             if args.strategy == NAIVE:
@@ -87,4 +62,4 @@ if __name__ == "__main__":
             elif args.strategy == MAX:
                 new_weights = compute_max_reward_weights(all_weights, avg_returns)
             
-            [t.set_weights({"dqn_policy": new_weights}) for t in trainers]
+            [t.set_weights({"default": new_weights}) for t in trainers]
