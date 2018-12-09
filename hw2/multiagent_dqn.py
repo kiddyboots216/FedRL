@@ -30,10 +30,21 @@ parser.add_argument('--strategy', '-s', type=str, choices=CHOICES, default=INDEP
 parser.add_argument('--timesteps_per_iteration', '-tsteps', type=int, default=1000)
 parser.add_argument('--target_network_update_freq', '-target_freq', type=int, default=500)
 parser.add_argument('--env', '-e', type=str, default="CartPole-v0")
+parser.add_argument('--comm', '-c', type=float, default=0.05)
 
 if __name__ == "__main__":
     args = parser.parse_args()
     ray.init()
+    # Increasing the comm round length shouldn't just strictly make training better
+    if args.comm:
+        default_timesteps_per_iterations = args.timesteps_per_iteration
+        default_target_network_update_freq = args.target_network_update_freq
+        default_num_iters = args.num_iters
+        args.timesteps_per_iteration = int(default_num_iters * default_timesteps_per_iterations * args.comm)
+        args.target_network_update_freq = int(default_num_iters * default_target_network_update_freq * args.comm)
+        args.num_iters = int(default_num_iters * default_timesteps_per_iterations / args.timesteps_per_iteration)
+        print("Num-iters: {}".format(args.num_iters))
+        print("Timesteps: {}".format(args.timesteps_per_iteration))
 
     # Simple environment with 1 cartpole
     register_env("multi_cartpole", lambda _: MultiCartpole(1))
