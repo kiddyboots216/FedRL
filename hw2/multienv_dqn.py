@@ -25,11 +25,13 @@ parser.add_argument('--strategy', '-s', type=str, choices=CHOICES, default=INDEP
 parser.add_argument('--timesteps_per_iteration', '-tsteps', type=int, default=1000)
 parser.add_argument('--target_network_update_freq', '-target_freq', type=int, default=500)
 parser.add_argument('--env', '-e', type=str, default="CartPole-v0")
+parser.add_argument('--num_samples', '-ns', type=int, default=1)
+parser.add_argument('--name', type=str, default="fed_experiment")
 
 def reset_adam(agent):
-    with a.local_evaluator.tf_sess.graph.as_default():
-        sess = a.local_evaluator.tf_sess
-        sess.run(a.reset_adam_optimizer)
+    with agent.local_evaluator.tf_sess.graph.as_default():
+        sess = agent.local_evaluator.tf_sess
+        sess.run(agent.reset_adam_optimizer)
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -89,11 +91,12 @@ if __name__ == "__main__":
                 [a.set_weights({"default": new_weights}) for a in agents]
 
     configuration = tune.Experiment(
-        "experiment_name",
+        args.name,
         run=FED_RL_BBY,
         trial_resources={"cpu": 2},
         stop={},  
-        config=config
+        config=config,
+        num_samples=args.num_samples
     )
 
     trials = tune.run_experiments(configuration, verbose=False)
