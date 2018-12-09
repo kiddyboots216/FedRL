@@ -27,6 +27,7 @@ parser.add_argument('--target_network_update_freq', '-target_freq', type=int, de
 parser.add_argument('--env', '-e', type=str, default="CartPole-v0")
 parser.add_argument('--num_samples', '-ns', type=int, default=1)
 parser.add_argument('--name', type=str, default="fed_experiment")
+parser.add_argument('--comm', '-c', type=float, default=0.05)
 
 def reset_adam(agent):
     with agent.local_evaluator.tf_sess.graph.as_default():
