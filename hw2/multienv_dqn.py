@@ -5,8 +5,10 @@ from __future__ import print_function
 import argparse
 import gym
 import numpy as np
+import tensorflow as tf
 
 import ray
+from ray import tune
 from ray.rllib.agents.dqn.dqn import DQNAgent
 from ray.rllib.agents.dqn.dqn_policy_graph import DQNPolicyGraph
 from ray.rllib.test.test_multi_agent_env import MultiCartpole
@@ -17,8 +19,8 @@ from fed_utils import *
 REWARD, NAIVE, INDEPENDENT, MAX = 'reward', 'naive', 'independent', 'max'
 CHOICES = [REWARD, NAIVE, INDEPENDENT, MAX]
 parser = argparse.ArgumentParser()
-parser.add_argument("--num-trainers", '-nt', type=int, default=2)
-parser.add_argument("--num-iters", type=int, default=20)
+parser.add_argument("--num_agents", '-na', type=int, default=2)
+parser.add_argument("--num_iters", '-iters', type=int, default=20)
 parser.add_argument('--strategy', '-s', type=str, choices=CHOICES, default=INDEPENDENT)
 parser.add_argument('--timesteps_per_iteration', '-tsteps', type=int, default=1000)
 parser.add_argument('--target_network_update_freq', '-target_freq', type=int, default=500)
@@ -28,31 +30,42 @@ if __name__ == "__main__":
     args = parser.parse_args()
     ray.init()
 
-    trainers = [DQNAgent(
+    agents = [DQNAgent(
     env=args.env, 
     config={
         "gamma": 0.95,
         "n_step": 3, # is this neccesary? Default is 1
         "timesteps_per_iteration": args.timesteps_per_iteration,
         "target_network_update_freq": args.target_network_update_freq,
-    }) for _ in range(args.num_trainers)]
+    }) for _ in range(args.num_agents)]
 
-    new_weights = trainers[0].get_weights(["default"]).get("default")
-    [t.set_weights({"default": new_weights}) for t in trainers]
+    new_weights = agents[0].get_weights(["default"]).get("default")
+    [a.set_weights({"default": new_weights}) for a in agents]
+
+    # add reset op for each agent    
+    for a in agents:
+        with a.local_evaluator.tf_sess.graph.as_default():
+            opt = a.local_evaluator.policy_map['default']._optimizer
+            a.reset_adam_optimizer = tf.variables_initializer(opt.variables())
+            
     for i in range(args.num_iters):
         print("== Iteration", i, "==")
         results = []
         # Improve each Agent
-        for trainer in trainers:
-            print("-- {} --".format(trainer._agent_name))
-            result = trainer.train()
+        for a in agents:
+            print("-- {} --".format(a._agent_name))
+            result = a.train()
             print(pretty_print(result))
             results.append(result)
-        
+            # reset adam
+            with a.local_evaluator.tf_sess.graph.as_default():
+                sess = a.local_evaluator.tf_sess
+                sess.run(a.reset_adam_optimizer)
+
         # if INDEPENDENT, agemnt weights do not need to be modified
         if args.strategy != INDEPENDENT:
             # gather all weights
-            all_weights = [t.get_weights(["default"]).get("default") for t in trainers]
+            all_weights = [a.get_weights(["default"]).get("default") for a in agents]
 
             avg_returns = [result['episode_reward_mean'] for result in results]
             if args.strategy == NAIVE:
@@ -62,4 +75,4 @@ if __name__ == "__main__":
             elif args.strategy == MAX:
                 new_weights = compute_max_reward_weights(all_weights, avg_returns)
             
-            [t.set_weights({"default": new_weights}) for t in trainers]
+            [a.set_weights({"default": new_weights}) for a in agents]
