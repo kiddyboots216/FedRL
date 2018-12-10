@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
     config = {"args": args}
 
-    def FED_RL_BBY(config, reporter):
+    def FED_RL(config, reporter):
         args = config["args"]
 
         agents = [DQNAgent(
@@ -100,11 +100,12 @@ if __name__ == "__main__":
                     new_weights = compute_max_reward_weights(all_weights, avg_returns)
                 
                 [a.set_weights({"default": new_weights}) for a in agents]
+                reporter(avg_agent_reward=np.mean(avg_returns), std_agent_reward=np.std(avg_returns)
 
     configuration = tune.Experiment(
         args.name,
-        run=FED_RL_BBY,
-        trial_resources={"cpu": 2},
+        run=FED_RL,
+        trial_resources={"cpu": 12},
         stop={},  
         config=config,
         num_samples=args.num_samples
