@@ -26,8 +26,8 @@ import uuid
 REWARD, NAIVE, INDEPENDENT, MAX = 'reward', 'naive', 'independent', 'max'
 CHOICES = [REWARD, NAIVE, INDEPENDENT, MAX]
 parser = argparse.ArgumentParser()
-parser.add_argument("--num_agents", '-na', type=int, default=2)
-parser.add_argument("--num_iters", '-iters', type=int, default=20)
+parser.add_argument("--num_agents", '-na', type=int, default=10)
+parser.add_argument("--num_iters", '-iters', type=int, default=25)
 parser.add_argument('--strategy', '-s', type=str, choices=CHOICES, default=INDEPENDENT)
 parser.add_argument('--timesteps_per_iteration', '-tsteps', type=int, default=1000)
 parser.add_argument('--target_network_update_freq', '-target_freq', type=int, default=500)
@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
         def logger_will(config):
             path = Path.home() / "ray_results" / exp_name / "agents" / str(date_suffix)
-            logdir_prefix = "will"
+            logdir_prefix = "AGENT"
             if not os.path.exists(str(path)):
                 os.makedirs(str(path))
             logdir = tempfile.mkdtemp(prefix=logdir_prefix, dir=str(path))
@@ -117,12 +117,13 @@ if __name__ == "__main__":
                 if args.strategy != INDEPENDENT:
                     reset_adam(a)
 
-            # if INDEPENDENT, agemnt weights do not need to be modified
+            avg_returns = [result['episode_reward_mean'] for result in results]
+
+            # if INDEPENDENT, agent weights do not need to be modified
             if args.strategy != INDEPENDENT:
                 # gather all weights
                 all_weights = [a.get_weights(["default"]).get("default") for a in agents]
 
-                avg_returns = [result['episode_reward_mean'] for result in results]
                 if args.strategy == NAIVE:
                     new_weights = compute_average_weights(all_weights)
                 elif args.strategy == REWARD:
@@ -131,7 +132,7 @@ if __name__ == "__main__":
                     new_weights = compute_max_reward_weights(all_weights, avg_returns)
                 
                 [a.set_weights({"default": new_weights}) for a in agents]
-                reporter(avg_agent_reward=np.mean(avg_returns), std_agent_reward=np.std(avg_returns))
+            reporter(avg_agent_reward=np.mean(avg_returns), std_agent_reward=np.std(avg_returns))
 
     configuration = tune.Experiment(
         args.name,
