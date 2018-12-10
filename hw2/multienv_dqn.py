@@ -27,7 +27,7 @@ REWARD, NAIVE, INDEPENDENT, MAX = 'reward', 'naive', 'independent', 'max'
 CHOICES = [REWARD, NAIVE, INDEPENDENT, MAX]
 parser = argparse.ArgumentParser()
 parser.add_argument("--num_agents", '-na', type=int, default=2)
-parser.add_argument("--num_iters", '-iters', type=int, default=2)
+parser.add_argument("--num_iters", '-iters', type=int, default=20)
 parser.add_argument('--strategy', '-s', type=str, choices=CHOICES, default=INDEPENDENT)
 parser.add_argument('--timesteps_per_iteration', '-tsteps', type=int, default=1000)
 parser.add_argument('--target_network_update_freq', '-target_freq', type=int, default=500)
@@ -112,7 +112,6 @@ if __name__ == "__main__":
                 result = a.train()
                 print(pretty_print(result))
                 print("reporting results for:", a)
-                reporter(**result)
                 results.append(result)
                 # reset adam
                 if args.strategy != INDEPENDENT:
