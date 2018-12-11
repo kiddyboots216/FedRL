@@ -1,5 +1,6 @@
 import numpy as np
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
+import gym
 
 def compute_average_weights(all_weights):
     averaged = []
